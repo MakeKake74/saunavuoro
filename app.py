@@ -8,7 +8,7 @@ from flask import Flask, render_template, request, jsonify
 from datetime import datetime, timedelta
 import sqlite3
 import os
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 app = Flask(__name__)
 app.config['DATABASE'] = 'saunavuoro.db'
@@ -39,8 +39,9 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 electricity_per_kw REAL NOT NULL DEFAULT 0.30,  -- €/kW
                 water_per_m3 REAL NOT NULL DEFAULT 2.50,        -- €/m³
-                heating_power_kw REAL NOT NULL DEFAULT 9.0,      -- Sauna heater kW
-                heating_duration_minutes INTEGER NOT NULL DEFAULT 120,  -- Min lämmitysaika
+                heating_power_kw REAL NOT NULL DEFAULT 9.0,      -- Sauna heater kW alussa
+                heating_duration_minutes INTEGER NOT NULL DEFAULT 120,  -- Lämmitysaika ennen 1. varausta (min)
+                cooling_power_per_hour_kw REAL NOT NULL DEFAULT 5.0,  -- kW/h jäähdytys
                 water_consumption_per_hour REAL NOT NULL DEFAULT 0.05,  -- m³/h
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -52,7 +53,10 @@ def init_db():
                 start_time TIMESTAMP NOT NULL,
                 end_time TIMESTAMP NOT NULL,
                 duration_minutes INTEGER NOT NULL,
-                price REAL,
+                heating_cost REAL,
+                cooling_cost REAL,
+                water_cost REAL,
+                total_price REAL,
                 status TEXT DEFAULT 'confirmed',  -- confirmed, cancelled
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (resident_id) REFERENCES residents(id)
@@ -62,10 +66,11 @@ def init_db():
             CREATE TABLE IF NOT EXISTS price_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 booking_id INTEGER NOT NULL,
-                calculated_price REAL NOT NULL,
                 heating_cost REAL NOT NULL,
+                cooling_cost REAL NOT NULL,
                 water_cost REAL NOT NULL,
-                concurrent_bookings INTEGER NOT NULL,
+                total_price REAL NOT NULL,
+                concurrent_residents INTEGER NOT NULL,
                 calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (booking_id) REFERENCES bookings(id)
             );
@@ -73,7 +78,7 @@ def init_db():
         db.commit()
 
 class PricingCalculator:
-    """Hintojen laskeminen"""
+    """Hintojen laskeminen saunavuoroille"""
     
     def __init__(self, db_row: sqlite3.Row):
         """Alusta laskin hintatiedoilla"""
@@ -81,35 +86,67 @@ class PricingCalculator:
         self.water_per_m3 = float(db_row['water_per_m3'])
         self.heating_power_kw = float(db_row['heating_power_kw'])
         self.heating_duration_minutes = int(db_row['heating_duration_minutes'])
+        self.cooling_power_per_hour_kw = float(db_row['cooling_power_per_hour_kw'])
         self.water_consumption_per_hour = float(db_row['water_consumption_per_hour'])
     
-    def calculate_heating_cost(self, concurrent_bookings: int) -> float:
+    def calculate_heating_cost(self, concurrent_residents: int) -> float:
         """
         Laske lämmityskustannus
         
-        Lämmityskustannus jaetaan kaikkien samanaikaisesti saunaa käyttävien kesken.
-        Lämmitys tapahtuu vain kerran, joten se on kiinteä kustannus.
+        Sauna lämpenee 2h ennen ensimmäistä varausta 9kW:lla.
+        Kustannus jaetaan kaikkien samalla päivällä varanneiden kesken.
         
         Args:
-            concurrent_bookings: Kuinka monta varausta samaan aikaan
+            concurrent_residents: Kuinka monta asukasta varaukselle samalla päivällä
             
         Returns:
             Lämmityskustannus per varaus (€)
         """
-        if concurrent_bookings < 1:
-            concurrent_bookings = 1
+        if concurrent_residents < 1:
+            concurrent_residents = 1
         
-        # Lämmitysenergia: kW * tunneissa
+        # Lämmitysenergia: 9 kW * 2 tunti
         heating_hours = self.heating_duration_minutes / 60
         heating_energy_kwh = self.heating_power_kw * heating_hours
         
         # Lämmityskustannus yhteensä
         total_heating_cost = heating_energy_kwh * self.electricity_per_kw
         
-        # Jaa kaikkien varausten kesken
-        cost_per_booking = total_heating_cost / concurrent_bookings
+        # Jaa kaikkien asukkaiden kesken
+        cost_per_resident = total_heating_cost / concurrent_residents
         
-        return round(cost_per_booking, 2)
+        return round(cost_per_resident, 2)
+    
+    def calculate_cooling_cost(self, cooling_duration_hours: float, concurrent_residents: int) -> float:
+        """
+        Laske jäähdytyksen kustannus
+        
+        Jäähdytys tapahtuu varausten välillä. Kustannus jaetaan
+        kaikkien samalla päivällä varanneiden kesken.
+        
+        Args:
+            cooling_duration_hours: Kuinka monta tuntia jäähdytystä
+            concurrent_residents: Kuinka monta asukasta varaukselle samalla päivällä
+            
+        Returns:
+            Jäähdytyksen kustannus per varaus (€)
+        """
+        if concurrent_residents < 1:
+            concurrent_residents = 1
+        
+        if cooling_duration_hours <= 0:
+            return 0.0
+        
+        # Jäähdytysenergia: 5 kW/h * tunteja
+        cooling_energy_kwh = self.cooling_power_per_hour_kw * cooling_duration_hours
+        
+        # Jäähdytyksen kustannus yhteensä
+        total_cooling_cost = cooling_energy_kwh * self.electricity_per_kw
+        
+        # Jaa kaikkien asukkaiden kesken
+        cost_per_resident = total_cooling_cost / concurrent_residents
+        
+        return round(cost_per_resident, 2)
     
     def calculate_water_cost(self, duration_minutes: int) -> float:
         """
@@ -131,37 +168,66 @@ class PricingCalculator:
     
     def calculate_total_price(
         self, 
-        duration_minutes: int, 
-        concurrent_bookings: int
-    ) -> Tuple[float, float, float]:
+        duration_minutes: int,
+        cooling_duration_hours: float,
+        concurrent_residents: int
+    ) -> Tuple[float, float, float, float]:
         """
         Laske kokonaishinta varaaukselle
         
         Args:
             duration_minutes: Varauksen kesto minuuteissa
-            concurrent_bookings: Kuinka monta varausta samaan aikaan
+            cooling_duration_hours: Jäähdytysaika ennen seuraavaa varausta
+            concurrent_residents: Kuinka monta asukasta samalla päivällä
             
         Returns:
-            Tuple: (total_price, heating_cost, water_cost)
+            Tuple: (total_price, heating_cost, cooling_cost, water_cost)
         """
-        heating_cost = self.calculate_heating_cost(concurrent_bookings)
+        heating_cost = self.calculate_heating_cost(concurrent_residents)
+        cooling_cost = self.calculate_cooling_cost(cooling_duration_hours, concurrent_residents)
         water_cost = self.calculate_water_cost(duration_minutes)
-        total_price = heating_cost + water_cost
+        total_price = heating_cost + cooling_cost + water_cost
         
-        return round(total_price, 2), heating_cost, water_cost
+        return round(total_price, 2), heating_cost, cooling_cost, water_cost
 
-def count_concurrent_bookings(db, start_time: str, end_time: str, exclude_booking_id: int = None) -> int:
+def get_same_day_residents(db, start_time: str) -> int:
     """
-    Laske kuinka monta varausta on samaan aikaan
+    Laske kuinka monta erilaista asukasta on varauksia samalla päivällä
+    
+    Args:
+        db: Tietokantayhteys
+        start_time: Varauksen alkamisaika (ISO 8601)
+        
+    Returns:
+        Erilaisten asukkaiden määrä samalla päivällä
+    """
+    # Erota päivä
+    booking_date = start_time.split('T')[0]
+    start_of_day = f"{booking_date} 00:00:00"
+    end_of_day = f"{booking_date} 23:59:59"
+    
+    result = db.execute('''
+        SELECT COUNT(DISTINCT resident_id) as count FROM bookings 
+        WHERE status = 'confirmed'
+        AND start_time >= ?
+        AND start_time < date(?, '+1 day')
+    ''', (start_of_day, booking_date)).fetchone()
+    
+    # +1 koska laskemme myös uutta varausta
+    return result['count'] + 1
+
+def check_overlapping_booking(db, start_time: str, end_time: str, exclude_booking_id: int = None) -> bool:
+    """
+    Tarkista onko varauksia samaan aikaan (ei sallittua)
     
     Args:
         db: Tietokantayhteys
         start_time: Varauksen alkamisaika (ISO 8601)
         end_time: Varauksen päättymisaika (ISO 8601)
-        exclude_booking_id: Poistetaan tämä varaus laskemista (päivityksessä käytetään)
+        exclude_booking_id: Poistetaan tämä varaus tarkastuksesta
         
     Returns:
-        Samaan aikaan olevien varausten määrä (sisältäen uuden varauksen)
+        True jos on päällekkäisyys, False jos ei
     """
     query = '''
         SELECT COUNT(*) as count FROM bookings 
@@ -175,8 +241,37 @@ def count_concurrent_bookings(db, start_time: str, end_time: str, exclude_bookin
         params.append(exclude_booking_id)
     
     result = db.execute(query, params).fetchone()
-    # +1 koska laskemme myös uutta varausta
-    return result['count'] + 1
+    return result['count'] > 0
+
+def calculate_cooling_duration(db, end_time: str) -> float:
+    """
+    Laske jäähdytysaika seuraavaan varaukseen
+    
+    Args:
+        db: Tietokantayhteys
+        end_time: Varauksen päättymisaika (ISO 8601)
+        
+    Returns:
+        Jäähdytysaika tunteina (0 jos ei seuraavaa)
+    """
+    # Etsi seuraava varaus samalla päivällä
+    result = db.execute('''
+        SELECT MIN(start_time) as next_start FROM bookings 
+        WHERE status = 'confirmed'
+        AND start_time > ?
+        AND DATE(start_time) = DATE(?)
+    ''', (end_time, end_time)).fetchone()
+    
+    if not result['next_start']:
+        return 0.0
+    
+    next_start = datetime.fromisoformat(result['next_start'])
+    current_end = datetime.fromisoformat(end_time)
+    
+    cooling_duration = (next_start - current_end).total_seconds() / 3600
+    
+    # Ei negatiivista jäähdytystä
+    return max(0.0, cooling_duration)
 
 @app.route('/')
 def index():
@@ -216,12 +311,14 @@ def pricing():
                water_per_m3 = ?,
                heating_power_kw = ?,
                heating_duration_minutes = ?,
+               cooling_power_per_hour_kw = ?,
                water_consumption_per_hour = ?
                WHERE id = 1''',
             (data['electricity_per_kw'], 
              data['water_per_m3'],
              data['heating_power_kw'],
              data['heating_duration_minutes'],
+             data['cooling_power_per_hour_kw'],
              data['water_consumption_per_hour'])
         )
         db.commit()
@@ -231,8 +328,11 @@ def pricing():
     if not pricing:
         # Luodaan oletushinnat
         db.execute(
-            'INSERT INTO pricing (electricity_per_kw, water_per_m3, heating_power_kw, heating_duration_minutes, water_consumption_per_hour) VALUES (?, ?, ?, ?, ?)',
-            (0.30, 2.50, 9.0, 120, 0.05)
+            '''INSERT INTO pricing 
+               (electricity_per_kw, water_per_m3, heating_power_kw, 
+                heating_duration_minutes, cooling_power_per_hour_kw, water_consumption_per_hour) 
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (0.30, 2.50, 9.0, 120, 5.0, 0.05)
         )
         db.commit()
         pricing = db.execute('SELECT * FROM pricing WHERE id = 1').fetchone()
@@ -274,21 +374,33 @@ def bookings():
             if duration_minutes < 60:
                 return jsonify({'error': 'Varaus täytyy olla vähintään 1 tunti'}), 400
             
+            # Tarkista että ei ole päällekkäisiä varauksia
+            if check_overlapping_booking(db, data['start_time'], data['end_time']):
+                return jsonify({'error': 'Saunaa ei voi varata päällekkäisille ajoille'}), 400
+            
+            # Laske kuinka monta asukasta samalla päivällä
+            concurrent_residents = get_same_day_residents(db, data['start_time'])
+            
+            # Laske jäähdytysaika
+            cooling_duration = calculate_cooling_duration(db, data['end_time'])
+            
             # Laske hinta
             pricing_data = db.execute('SELECT * FROM pricing WHERE id = 1').fetchone()
             calculator = PricingCalculator(pricing_data)
-            concurrent_bookings = count_concurrent_bookings(db, data['start_time'], data['end_time'])
-            total_price, heating_cost, water_cost = calculator.calculate_total_price(
-                duration_minutes, 
-                concurrent_bookings
+            total_price, heating_cost, cooling_cost, water_cost = calculator.calculate_total_price(
+                duration_minutes,
+                cooling_duration,
+                concurrent_residents
             )
             
             # Tallenna varaus
             cursor = db.execute(
                 '''INSERT INTO bookings 
-                   (resident_id, start_time, end_time, duration_minutes, price, status) 
-                   VALUES (?, ?, ?, ?, ?, 'confirmed')''',
-                (resident_id, data['start_time'], data['end_time'], duration_minutes, total_price)
+                   (resident_id, start_time, end_time, duration_minutes, 
+                    heating_cost, cooling_cost, water_cost, total_price, status) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')''',
+                (resident_id, data['start_time'], data['end_time'], duration_minutes,
+                 heating_cost, cooling_cost, water_cost, total_price)
             )
             booking_id = cursor.lastrowid
             db.commit()
@@ -296,19 +408,22 @@ def bookings():
             # Tallenna hinnan historiikki
             db.execute(
                 '''INSERT INTO price_history 
-                   (booking_id, calculated_price, heating_cost, water_cost, concurrent_bookings) 
-                   VALUES (?, ?, ?, ?, ?)''',
-                (booking_id, total_price, heating_cost, water_cost, concurrent_bookings)
+                   (booking_id, heating_cost, cooling_cost, water_cost, 
+                    total_price, concurrent_residents) 
+                   VALUES (?, ?, ?, ?, ?, ?)''',
+                (booking_id, heating_cost, cooling_cost, water_cost, 
+                 total_price, concurrent_residents)
             )
             db.commit()
             
             return jsonify({
                 'status': 'success',
                 'booking_id': booking_id,
-                'price': total_price,
                 'heating_cost': heating_cost,
+                'cooling_cost': cooling_cost,
                 'water_cost': water_cost,
-                'concurrent_bookings': concurrent_bookings
+                'total_price': total_price,
+                'concurrent_residents': concurrent_residents
             }), 201
             
         except ValueError as e:
@@ -344,20 +459,24 @@ def pricing_preview():
              datetime.fromisoformat(data['start_time'])).total_seconds() / 60
         )
         
-        concurrent_bookings = count_concurrent_bookings(db, data['start_time'], data['end_time'])
+        concurrent_residents = get_same_day_residents(db, data['start_time'])
+        cooling_duration = calculate_cooling_duration(db, data['end_time'])
         
         pricing_data = db.execute('SELECT * FROM pricing WHERE id = 1').fetchone()
         calculator = PricingCalculator(pricing_data)
-        total_price, heating_cost, water_cost = calculator.calculate_total_price(
-            duration_minutes, 
-            concurrent_bookings
+        total_price, heating_cost, cooling_cost, water_cost = calculator.calculate_total_price(
+            duration_minutes,
+            cooling_duration,
+            concurrent_residents
         )
         
         return jsonify({
             'total_price': total_price,
             'heating_cost': heating_cost,
+            'cooling_cost': cooling_cost,
             'water_cost': water_cost,
-            'concurrent_bookings': concurrent_bookings,
+            'concurrent_residents': concurrent_residents,
+            'cooling_duration': cooling_duration,
             'duration_minutes': duration_minutes
         })
     except Exception as e:
