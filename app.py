@@ -39,9 +39,9 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 electricity_per_kw REAL NOT NULL DEFAULT 0.30,  -- €/kW
                 water_per_m3 REAL NOT NULL DEFAULT 2.50,        -- €/m³
-                heating_power_kw REAL NOT NULL DEFAULT 9.0,      -- Sauna heater kW alussa
+                heating_power_kw REAL NOT NULL DEFAULT 9.0,      -- Sauna heater kW alkulämmityksessä
                 heating_duration_minutes INTEGER NOT NULL DEFAULT 120,  -- Lämmitysaika ennen 1. varausta (min)
-                cooling_power_per_hour_kw REAL NOT NULL DEFAULT 5.0,  -- kW/h jäähdytys
+                maintenance_power_per_hour_kw REAL NOT NULL DEFAULT 5.0,  -- kW/h käynnissäpitoon varausten välillä
                 water_consumption_per_hour REAL NOT NULL DEFAULT 0.05,  -- m³/h
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -54,7 +54,7 @@ def init_db():
                 end_time TIMESTAMP NOT NULL,
                 duration_minutes INTEGER NOT NULL,
                 heating_cost REAL,
-                cooling_cost REAL,
+                maintenance_cost REAL,
                 water_cost REAL,
                 total_price REAL,
                 status TEXT DEFAULT 'confirmed',  -- confirmed, cancelled
@@ -67,7 +67,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 booking_id INTEGER NOT NULL,
                 heating_cost REAL NOT NULL,
-                cooling_cost REAL NOT NULL,
+                maintenance_cost REAL NOT NULL,
                 water_cost REAL NOT NULL,
                 total_price REAL NOT NULL,
                 concurrent_residents INTEGER NOT NULL,
@@ -86,12 +86,12 @@ class PricingCalculator:
         self.water_per_m3 = float(db_row['water_per_m3'])
         self.heating_power_kw = float(db_row['heating_power_kw'])
         self.heating_duration_minutes = int(db_row['heating_duration_minutes'])
-        self.cooling_power_per_hour_kw = float(db_row['cooling_power_per_hour_kw'])
+        self.maintenance_power_per_hour_kw = float(db_row['maintenance_power_per_hour_kw'])
         self.water_consumption_per_hour = float(db_row['water_consumption_per_hour'])
     
     def calculate_heating_cost(self, concurrent_residents: int) -> float:
         """
-        Laske lämmityskustannus
+        Laske alkulämmityskustannus
         
         Sauna lämpenee 2h ennen ensimmäistä varausta 9kW:lla.
         Kustannus jaetaan kaikkien samalla päivällä varanneiden kesken.
@@ -117,34 +117,34 @@ class PricingCalculator:
         
         return round(cost_per_resident, 2)
     
-    def calculate_cooling_cost(self, cooling_duration_hours: float, concurrent_residents: int) -> float:
+    def calculate_maintenance_cost(self, maintenance_duration_hours: float, concurrent_residents: int) -> float:
         """
-        Laske jäähdytyksen kustannus
+        Laske käynnissäpidon kustannus
         
-        Jäähdytys tapahtuu varausten välillä. Kustannus jaetaan
+        Sauna pidetään lämpimänä varausten välillä. Kustannus jaetaan
         kaikkien samalla päivällä varanneiden kesken.
         
         Args:
-            cooling_duration_hours: Kuinka monta tuntia jäähdytystä
+            maintenance_duration_hours: Kuinka monta tuntia käynnissäpitoa
             concurrent_residents: Kuinka monta asukasta varaukselle samalla päivällä
             
         Returns:
-            Jäähdytyksen kustannus per varaus (€)
+            Käynnissäpidon kustannus per varaus (€)
         """
         if concurrent_residents < 1:
             concurrent_residents = 1
         
-        if cooling_duration_hours <= 0:
+        if maintenance_duration_hours <= 0:
             return 0.0
         
-        # Jäähdytysenergia: 5 kW/h * tunteja
-        cooling_energy_kwh = self.cooling_power_per_hour_kw * cooling_duration_hours
+        # Käynnissäpitoenergia: ~5 kW/h * tunteja
+        maintenance_energy_kwh = self.maintenance_power_per_hour_kw * maintenance_duration_hours
         
-        # Jäähdytyksen kustannus yhteensä
-        total_cooling_cost = cooling_energy_kwh * self.electricity_per_kw
+        # Käynnissäpidon kustannus yhteensä
+        total_maintenance_cost = maintenance_energy_kwh * self.electricity_per_kw
         
         # Jaa kaikkien asukkaiden kesken
-        cost_per_resident = total_cooling_cost / concurrent_residents
+        cost_per_resident = total_maintenance_cost / concurrent_residents
         
         return round(cost_per_resident, 2)
     
@@ -169,7 +169,7 @@ class PricingCalculator:
     def calculate_total_price(
         self, 
         duration_minutes: int,
-        cooling_duration_hours: float,
+        maintenance_duration_hours: float,
         concurrent_residents: int
     ) -> Tuple[float, float, float, float]:
         """
@@ -177,18 +177,18 @@ class PricingCalculator:
         
         Args:
             duration_minutes: Varauksen kesto minuuteissa
-            cooling_duration_hours: Jäähdytysaika ennen seuraavaa varausta
+            maintenance_duration_hours: Käynnissäpitoaika seuraavaan varaukseen
             concurrent_residents: Kuinka monta asukasta samalla päivällä
             
         Returns:
-            Tuple: (total_price, heating_cost, cooling_cost, water_cost)
+            Tuple: (total_price, heating_cost, maintenance_cost, water_cost)
         """
         heating_cost = self.calculate_heating_cost(concurrent_residents)
-        cooling_cost = self.calculate_cooling_cost(cooling_duration_hours, concurrent_residents)
+        maintenance_cost = self.calculate_maintenance_cost(maintenance_duration_hours, concurrent_residents)
         water_cost = self.calculate_water_cost(duration_minutes)
-        total_price = heating_cost + cooling_cost + water_cost
+        total_price = heating_cost + maintenance_cost + water_cost
         
-        return round(total_price, 2), heating_cost, cooling_cost, water_cost
+        return round(total_price, 2), heating_cost, maintenance_cost, water_cost
 
 def get_same_day_residents(db, start_time: str) -> int:
     """
@@ -243,16 +243,16 @@ def check_overlapping_booking(db, start_time: str, end_time: str, exclude_bookin
     result = db.execute(query, params).fetchone()
     return result['count'] > 0
 
-def calculate_cooling_duration(db, end_time: str) -> float:
+def calculate_maintenance_duration(db, end_time: str) -> float:
     """
-    Laske jäähdytysaika seuraavaan varaukseen
+    Laske käynnissäpitoaika seuraavaan varaukseen
     
     Args:
         db: Tietokantayhteys
         end_time: Varauksen päättymisaika (ISO 8601)
         
     Returns:
-        Jäähdytysaika tunteina (0 jos ei seuraavaa)
+        Käynnissäpitoaika tunteina (0 jos ei seuraavaa)
     """
     # Etsi seuraava varaus samalla päivällä
     result = db.execute('''
@@ -268,10 +268,10 @@ def calculate_cooling_duration(db, end_time: str) -> float:
     next_start = datetime.fromisoformat(result['next_start'])
     current_end = datetime.fromisoformat(end_time)
     
-    cooling_duration = (next_start - current_end).total_seconds() / 3600
+    maintenance_duration = (next_start - current_end).total_seconds() / 3600
     
-    # Ei negatiivista jäähdytystä
-    return max(0.0, cooling_duration)
+    # Ei negatiivista käynnissäpitoa
+    return max(0.0, maintenance_duration)
 
 @app.route('/')
 def index():
@@ -311,14 +311,14 @@ def pricing():
                water_per_m3 = ?,
                heating_power_kw = ?,
                heating_duration_minutes = ?,
-               cooling_power_per_hour_kw = ?,
+               maintenance_power_per_hour_kw = ?,
                water_consumption_per_hour = ?
                WHERE id = 1''',
             (data['electricity_per_kw'], 
              data['water_per_m3'],
              data['heating_power_kw'],
              data['heating_duration_minutes'],
-             data['cooling_power_per_hour_kw'],
+             data['maintenance_power_per_hour_kw'],
              data['water_consumption_per_hour'])
         )
         db.commit()
@@ -330,7 +330,7 @@ def pricing():
         db.execute(
             '''INSERT INTO pricing 
                (electricity_per_kw, water_per_m3, heating_power_kw, 
-                heating_duration_minutes, cooling_power_per_hour_kw, water_consumption_per_hour) 
+                heating_duration_minutes, maintenance_power_per_hour_kw, water_consumption_per_hour) 
                VALUES (?, ?, ?, ?, ?, ?)''',
             (0.30, 2.50, 9.0, 120, 5.0, 0.05)
         )
@@ -381,15 +381,15 @@ def bookings():
             # Laske kuinka monta asukasta samalla päivällä
             concurrent_residents = get_same_day_residents(db, data['start_time'])
             
-            # Laske jäähdytysaika
-            cooling_duration = calculate_cooling_duration(db, data['end_time'])
+            # Laske käynnissäpitoaika
+            maintenance_duration = calculate_maintenance_duration(db, data['end_time'])
             
             # Laske hinta
             pricing_data = db.execute('SELECT * FROM pricing WHERE id = 1').fetchone()
             calculator = PricingCalculator(pricing_data)
-            total_price, heating_cost, cooling_cost, water_cost = calculator.calculate_total_price(
+            total_price, heating_cost, maintenance_cost, water_cost = calculator.calculate_total_price(
                 duration_minutes,
-                cooling_duration,
+                maintenance_duration,
                 concurrent_residents
             )
             
@@ -397,10 +397,10 @@ def bookings():
             cursor = db.execute(
                 '''INSERT INTO bookings 
                    (resident_id, start_time, end_time, duration_minutes, 
-                    heating_cost, cooling_cost, water_cost, total_price, status) 
+                    heating_cost, maintenance_cost, water_cost, total_price, status) 
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')''',
                 (resident_id, data['start_time'], data['end_time'], duration_minutes,
-                 heating_cost, cooling_cost, water_cost, total_price)
+                 heating_cost, maintenance_cost, water_cost, total_price)
             )
             booking_id = cursor.lastrowid
             db.commit()
@@ -408,10 +408,10 @@ def bookings():
             # Tallenna hinnan historiikki
             db.execute(
                 '''INSERT INTO price_history 
-                   (booking_id, heating_cost, cooling_cost, water_cost, 
+                   (booking_id, heating_cost, maintenance_cost, water_cost, 
                     total_price, concurrent_residents) 
                    VALUES (?, ?, ?, ?, ?, ?)''',
-                (booking_id, heating_cost, cooling_cost, water_cost, 
+                (booking_id, heating_cost, maintenance_cost, water_cost, 
                  total_price, concurrent_residents)
             )
             db.commit()
@@ -420,7 +420,7 @@ def bookings():
                 'status': 'success',
                 'booking_id': booking_id,
                 'heating_cost': heating_cost,
-                'cooling_cost': cooling_cost,
+                'maintenance_cost': maintenance_cost,
                 'water_cost': water_cost,
                 'total_price': total_price,
                 'concurrent_residents': concurrent_residents
@@ -460,23 +460,23 @@ def pricing_preview():
         )
         
         concurrent_residents = get_same_day_residents(db, data['start_time'])
-        cooling_duration = calculate_cooling_duration(db, data['end_time'])
+        maintenance_duration = calculate_maintenance_duration(db, data['end_time'])
         
         pricing_data = db.execute('SELECT * FROM pricing WHERE id = 1').fetchone()
         calculator = PricingCalculator(pricing_data)
-        total_price, heating_cost, cooling_cost, water_cost = calculator.calculate_total_price(
+        total_price, heating_cost, maintenance_cost, water_cost = calculator.calculate_total_price(
             duration_minutes,
-            cooling_duration,
+            maintenance_duration,
             concurrent_residents
         )
         
         return jsonify({
             'total_price': total_price,
             'heating_cost': heating_cost,
-            'cooling_cost': cooling_cost,
+            'maintenance_cost': maintenance_cost,
             'water_cost': water_cost,
             'concurrent_residents': concurrent_residents,
-            'cooling_duration': cooling_duration,
+            'maintenance_duration': maintenance_duration,
             'duration_minutes': duration_minutes
         })
     except Exception as e:
