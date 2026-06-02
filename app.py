@@ -52,12 +52,13 @@ def init_db():
                 resident_id INTEGER NOT NULL,
                 start_time TIMESTAMP NOT NULL,
                 end_time TIMESTAMP NOT NULL,
+                actual_end_time TIMESTAMP,  -- Todellinen loppumisaika kun merkattiin vapaaksi
                 duration_minutes INTEGER NOT NULL,
                 heating_cost REAL,
                 maintenance_cost REAL,
                 water_cost REAL,
                 total_price REAL,
-                status TEXT DEFAULT 'confirmed',  -- confirmed, cancelled
+                status TEXT DEFAULT 'confirmed',  -- confirmed, in_progress, completed, cancelled
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (resident_id) REFERENCES residents(id)
             );
@@ -73,6 +74,16 @@ def init_db():
                 concurrent_residents INTEGER NOT NULL,
                 calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (booking_id) REFERENCES bookings(id)
+            );
+            
+            -- Saunan tila
+            CREATE TABLE IF NOT EXISTS sauna_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT DEFAULT 'off',  -- off, heating, ready, in_use
+                current_booking_id INTEGER,
+                active_residents INTEGER DEFAULT 0,  -- Kuinka monta asukasta on varannut saunaa tänään
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (current_booking_id) REFERENCES bookings(id)
             );
         ''')
         db.commit()
@@ -208,7 +219,7 @@ def get_same_day_residents(db, start_time: str) -> int:
     
     result = db.execute('''
         SELECT COUNT(DISTINCT resident_id) as count FROM bookings 
-        WHERE status = 'confirmed'
+        WHERE status IN ('confirmed', 'in_progress', 'completed')
         AND start_time >= ?
         AND start_time < date(?, '+1 day')
     ''', (start_of_day, booking_date)).fetchone()
@@ -231,7 +242,7 @@ def check_overlapping_booking(db, start_time: str, end_time: str, exclude_bookin
     """
     query = '''
         SELECT COUNT(*) as count FROM bookings 
-        WHERE status = 'confirmed'
+        WHERE status IN ('confirmed', 'in_progress')
         AND NOT (end_time <= ? OR start_time >= ?)
     '''
     params = [start_time, end_time]
@@ -257,7 +268,7 @@ def calculate_maintenance_duration(db, end_time: str) -> float:
     # Etsi seuraava varaus samalla päivällä
     result = db.execute('''
         SELECT MIN(start_time) as next_start FROM bookings 
-        WHERE status = 'confirmed'
+        WHERE status IN ('confirmed', 'in_progress')
         AND start_time > ?
         AND DATE(start_time) = DATE(?)
     ''', (end_time, end_time)).fetchone()
@@ -272,6 +283,32 @@ def calculate_maintenance_duration(db, end_time: str) -> float:
     
     # Ei negatiivista käynnissäpitoa
     return max(0.0, maintenance_duration)
+
+def is_last_booking_of_day(db, booking_id: int) -> bool:
+    """
+    Tarkista onko tämä viimeinen varaus päivällä
+    
+    Args:
+        db: Tietokantayhteys
+        booking_id: Varauksen ID
+        
+    Returns:
+        True jos tämä on viimeinen varaus
+    """
+    booking = db.execute('SELECT start_time FROM bookings WHERE id = ?', (booking_id,)).fetchone()
+    if not booking:
+        return False
+    
+    booking_date = booking['start_time'].split(' ')[0]
+    
+    result = db.execute('''
+        SELECT COUNT(*) as count FROM bookings 
+        WHERE status IN ('confirmed', 'in_progress')
+        AND DATE(start_time) = ?
+        AND id != ?
+    ''', (booking_date, booking_id)).fetchone()
+    
+    return result['count'] == 0
 
 @app.route('/')
 def index():
@@ -435,10 +472,117 @@ def bookings():
         SELECT b.*, r.name, r.apartment 
         FROM bookings b 
         LEFT JOIN residents r ON b.resident_id = r.id
-        WHERE b.status = 'confirmed' 
+        WHERE b.status IN ('confirmed', 'in_progress', 'completed')
         ORDER BY b.start_time
     ''').fetchall()
     return jsonify([dict(b) for b in bookings])
+
+@app.route('/api/bookings/<int:booking_id>/start', methods=['POST'])
+def start_booking(booking_id: int):
+    """Merkitse varaus alkaneeksi"""
+    db = get_db()
+    
+    try:
+        booking = db.execute('SELECT * FROM bookings WHERE id = ?', (booking_id,)).fetchone()
+        
+        if not booking:
+            return jsonify({'error': 'Varausta ei löydy'}), 404
+        
+        if booking['status'] != 'confirmed':
+            return jsonify({'error': 'Vain confirmed-varauksen voi merkitä alkaneeksi'}), 400
+        
+        # Päivitä varauksen status
+        db.execute('UPDATE bookings SET status = ? WHERE id = ?', ('in_progress', booking_id))
+        db.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f"Varaus #{booking_id} merkitty alkaneeksi"
+        })
+    except Exception as e:
+        return jsonify({'error': f'Virhe: {str(e)}'}), 500
+
+@app.route('/api/bookings/<int:booking_id>/complete', methods=['POST'])
+def complete_booking(booking_id: int):
+    """Merkitse varaus vapaaksi ja laske lopullinen hinta"""
+    db = get_db()
+    
+    try:
+        booking = db.execute('SELECT * FROM bookings WHERE id = ?', (booking_id,)).fetchone()
+        
+        if not booking:
+            return jsonify({'error': 'Varausta ei löydy'}), 404
+        
+        if booking['status'] != 'in_progress':
+            return jsonify({'error': 'Vain in_progress-varauksen voi merkitä vapaaksi'}), 400
+        
+        # Merkitse todellinen loppumisaika
+        actual_end_time = datetime.now().isoformat()
+        
+        # Laske todellinen kesto
+        start_time = datetime.fromisoformat(booking['start_time'])
+        actual_end = datetime.now()
+        actual_duration_minutes = int((actual_end - start_time).total_seconds() / 60)
+        
+        # Päivitä varauksen tiedot
+        db.execute('''
+            UPDATE bookings 
+            SET status = ?, actual_end_time = ?, duration_minutes = ?
+            WHERE id = ?
+        ''', ('completed', actual_end_time, actual_duration_minutes, booking_id))
+        db.commit()
+        
+        # Tarkista onko tämä viimeinen varaus päivällä
+        is_last = is_last_booking_of_day(db, booking_id)
+        
+        sauna_off = False
+        if is_last:
+            # Sammuta sauna
+            db.execute('UPDATE sauna_status SET status = ? WHERE id = 1', ('off',))
+            db.commit()
+            sauna_off = True
+        
+        return jsonify({
+            'status': 'success',
+            'message': f"Varaus #{booking_id} merkitty vapaaksi",
+            'actual_duration': actual_duration_minutes,
+            'sauna_off': sauna_off
+        })
+    except Exception as e:
+        return jsonify({'error': f'Virhe: {str(e)}'}), 500
+
+@app.route('/api/sauna/status', methods=['GET'])
+def sauna_status():
+    """Hae saunan tila"""
+    db = get_db()
+    
+    try:
+        status = db.execute('SELECT * FROM sauna_status WHERE id = 1').fetchone()
+        
+        if not status:
+            # Luo oletusstatus
+            db.execute('''
+                INSERT INTO sauna_status (status, active_residents) 
+                VALUES (?, ?)
+            ''', ('off', 0))
+            db.commit()
+            status = db.execute('SELECT * FROM sauna_status WHERE id = 1').fetchone()
+        
+        # Laske aktiiviset varaukset tänään
+        today = datetime.now().strftime('%Y-%m-%d')
+        active_bookings = db.execute('''
+            SELECT COUNT(*) as count FROM bookings 
+            WHERE status IN ('confirmed', 'in_progress')
+            AND DATE(start_time) = ?
+        ''', (today,)).fetchone()
+        
+        return jsonify({
+            'status': status['status'],
+            'active_residents': active_bookings['count'],
+            'last_updated': status['last_updated']
+        })
+    except Exception as e:
+        return jsonify({'error': f'Virhe: {str(e)}'}), 500
 
 @app.route('/api/pricing/preview', methods=['POST'])
 def pricing_preview():
