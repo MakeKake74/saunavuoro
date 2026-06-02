@@ -14,55 +14,153 @@
         </header>
 
         <nav class="tabs">
-            <button class="tab-button active" data-tab="bookings">Varaukset</button>
+            <button class="tab-button active" data-tab="booking">Varaa sauna</button>
+            <button class="tab-button" data-tab="bookings">Varaukset</button>
             <button class="tab-button" data-tab="residents">Asukkaat</button>
             <button class="tab-button" data-tab="pricing">Hinnat</button>
         </nav>
 
+        <!-- Varaa sauna -->
+        <section id="booking" class="tab-content active">
+            <h2>Varaa saunavuoro</h2>
+            
+            <form id="booking-form">
+                <div class="form-group">
+                    <label for="resident">Asukas *</label>
+                    <select id="resident" required>
+                        <option value="">-- Valitse asukas --</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="booking-date">Päivä *</label>
+                    <input type="date" id="booking-date" required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="start-time">Alkamisaika *</label>
+                        <input type="time" id="start-time" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="end-time">Päättymisaika *</label>
+                        <input type="time" id="end-time" required>
+                    </div>
+                </div>
+
+                <div id="price-preview" class="price-preview hidden">
+                    <h3>Hinnan ennakkoarvio</h3>
+                    <div class="price-breakdown">
+                        <div class="price-item">
+                            <span>Alkulämmitys:</span>
+                            <span class="price-value" id="preview-heating">-</span>
+                        </div>
+                        <div class="price-item">
+                            <span>Käynnissäpito:</span>
+                            <span class="price-value" id="preview-maintenance">-</span>
+                        </div>
+                        <div class="price-item">
+                            <span>Vedenkulu:</span>
+                            <span class="price-value" id="preview-water">-</span>
+                        </div>
+                        <div class="price-item total">
+                            <span>Yhteensä:</span>
+                            <span class="price-value" id="preview-total">-</span>
+                        </div>
+                        <div class="price-note">
+                            Samanaikaiset varanneet: <span id="preview-residents">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="booking-message" class="hidden"></div>
+
+                <button type="submit" class="btn-primary">Varaa sauna</button>
+            </form>
+        </section>
+
         <!-- Varaukset -->
-        <section id="bookings" class="tab-content active">
-            <h2>Varaukset</h2>
-            <div id="bookings-list"></div>
+        <section id="bookings" class="tab-content">
+            <h2>Kaikki varaukset</h2>
+            <div id="bookings-list" class="bookings-list"></div>
         </section>
 
         <!-- Asukkaat -->
         <section id="residents" class="tab-content">
             <h2>Asukkaat</h2>
             <form id="resident-form">
-                <input type="text" placeholder="Nimi" required>
-                <input type="text" placeholder="Asunto" required>
-                <input type="email" placeholder="Sähköposti">
-                <input type="tel" placeholder="Puhelin">
-                <button type="submit">Lisää asukas</button>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="resident-name">Nimi *</label>
+                        <input type="text" id="resident-name" placeholder="Nimi" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="resident-apartment">Asunto *</label>
+                        <input type="text" id="resident-apartment" placeholder="Asunto" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="resident-email">Sähköposti</label>
+                        <input type="email" id="resident-email" placeholder="Sähköposti">
+                    </div>
+                    <div class="form-group">
+                        <label for="resident-phone">Puhelin</label>
+                        <input type="tel" id="resident-phone" placeholder="Puhelin">
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary">Lisää asukas</button>
             </form>
-            <div id="residents-list"></div>
+            <div id="residents-list" class="residents-list"></div>
         </section>
 
         <!-- Hinnat -->
         <section id="pricing" class="tab-content">
             <h2>Hinnat ja konfiguraatio</h2>
             <form id="pricing-form">
-                <div class="form-group">
-                    <label>Sähkö (€/kW)</label>
-                    <input type="number" id="electricity" step="0.01" min="0">
+                <div class="pricing-section">
+                    <h3>Sähkö ja lämmitys</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="electricity">Sähkön hinta (€/kWh)</label>
+                            <input type="number" id="electricity" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="heating_power">Alkulämmitysteho (kW)</label>
+                            <input type="number" id="heating_power" step="0.1" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="heating_duration">Alkulämmitysaika (min)</label>
+                            <input type="number" id="heating_duration" min="0" required>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Vesi (€/m³)</label>
-                    <input type="number" id="water" step="0.01" min="0">
+
+                <div class="pricing-section">
+                    <h3>Käynnissäpito</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="maintenance_power">Käynnissäpitovoima (kW/h)</label>
+                            <input type="number" id="maintenance_power" step="0.1" min="0" required>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Saunan lämmitysvoima (kW)</label>
-                    <input type="number" id="heating_power" step="0.1" min="0">
+
+                <div class="pricing-section">
+                    <h3>Vesi</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="water">Veden hinta (€/m³)</label>
+                            <input type="number" id="water" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="water_consumption">Veden kulutus (m³/h)</label>
+                            <input type="number" id="water_consumption" step="0.001" min="0" required>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Lämmitysaika (minuuttia)</label>
-                    <input type="number" id="heating_duration" min="0">
-                </div>
-                <div class="form-group">
-                    <label>Veden kulutus (m³/h)</label>
-                    <input type="number" id="water_consumption" step="0.01" min="0">
-                </div>
-                <button type="submit">Tallenna hinnat</button>
+
+                <button type="submit" class="btn-primary">Tallenna hinnat</button>
             </form>
         </section>
     </div>
