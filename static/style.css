@@ -40,15 +40,17 @@ header p {
 .tabs {
     display: flex;
     border-bottom: 2px solid #eee;
+    flex-wrap: wrap;
 }
 
 .tab-button {
     flex: 1;
+    min-width: 150px;
     padding: 15px 20px;
     border: none;
     background: white;
     cursor: pointer;
-    font-size: 1em;
+    font-size: 0.9em;
     font-weight: 500;
     color: #666;
     transition: all 0.3s;
@@ -85,6 +87,14 @@ header p {
 h2 {
     color: #333;
     margin-bottom: 20px;
+    font-size: 1.8em;
+}
+
+h3 {
+    color: #555;
+    margin-top: 20px;
+    margin-bottom: 15px;
+    font-size: 1.2em;
 }
 
 form {
@@ -95,17 +105,32 @@ form {
     margin-bottom: 15px;
 }
 
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+@media (max-width: 600px) {
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
 label {
     display: block;
     margin-bottom: 5px;
     font-weight: 500;
     color: #333;
+    font-size: 0.95em;
 }
 
 input[type="text"],
 input[type="email"],
 input[type="tel"],
 input[type="number"],
+input[type="date"],
+input[type="time"],
 input[type="datetime-local"],
 select {
     width: 100%;
@@ -114,6 +139,7 @@ select {
     border-radius: 5px;
     font-size: 1em;
     transition: border-color 0.3s;
+    font-family: inherit;
 }
 
 input:focus,
@@ -123,7 +149,7 @@ select:focus {
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
-button {
+.btn-primary {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     padding: 12px 24px;
@@ -133,47 +159,171 @@ button {
     font-size: 1em;
     font-weight: 500;
     transition: transform 0.2s, box-shadow 0.2s;
+    width: 100%;
+    margin-top: 20px;
 }
 
-button:hover {
+.btn-primary:hover {
     transform: translateY(-2px);
     box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
 }
 
-button:active {
+.btn-primary:active {
     transform: translateY(0);
 }
 
+/* Price preview */
+.price-preview {
+    background: #f0f4ff;
+    border-left: 4px solid #667eea;
+    padding: 20px;
+    border-radius: 5px;
+    margin: 20px 0;
+    transition: all 0.3s;
+}
+
+.price-preview.hidden {
+    display: none;
+}
+
+.price-preview h3 {
+    color: #667eea;
+    margin-top: 0;
+    margin-bottom: 15px;
+}
+
+.price-breakdown {
+    background: white;
+    padding: 15px;
+    border-radius: 5px;
+}
+
+.price-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95em;
+}
+
+.price-item:last-child {
+    border-bottom: none;
+}
+
+.price-item.total {
+    border-top: 2px solid #667eea;
+    border-bottom: none;
+    font-weight: bold;
+    font-size: 1.1em;
+    padding-top: 10px;
+    padding-bottom: 5px;
+    color: #667eea;
+}
+
+.price-value {
+    font-weight: 600;
+    color: #333;
+}
+
+.price-note {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+    font-size: 0.9em;
+    color: #666;
+}
+
+/* Messages */
+#booking-message {
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+#booking-message.success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+#booking-message.error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Cards and lists */
 .card {
     background: #f9f9f9;
     border-left: 4px solid #667eea;
     padding: 15px;
     margin-bottom: 15px;
     border-radius: 5px;
+    transition: box-shadow 0.3s;
+}
+
+.card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .card h3 {
     color: #333;
     margin-bottom: 10px;
+    margin-top: 0;
 }
 
 .card p {
     color: #666;
     line-height: 1.6;
+    margin: 5px 0;
+    font-size: 0.95em;
 }
 
-.success {
-    background: #d4edda;
-    color: #155724;
-    padding: 15px;
+.bookings-list,
+.residents-list {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+/* Pricing section */
+.pricing-section {
+    background: #f9f9f9;
+    padding: 20px;
     border-radius: 5px;
     margin-bottom: 20px;
 }
 
-.error {
-    background: #f8d7da;
-    color: #721c24;
-    padding: 15px;
-    border-radius: 5px;
-    margin-bottom: 20px;
+.pricing-section h3 {
+    color: #667eea;
+    margin-top: 0;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    header h1 {
+        font-size: 2em;
+    }
+
+    .tab-button {
+        min-width: 100px;
+        padding: 10px 15px;
+        font-size: 0.85em;
+    }
+
+    .tab-content {
+        padding: 20px;
+    }
+
+    h2 {
+        font-size: 1.4em;
+    }
+
+    .btn-primary {
+        padding: 10px 20px;
+    }
 }
