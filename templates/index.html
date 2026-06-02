@@ -9,8 +9,19 @@
 <body>
     <div class="container">
         <header>
-            <h1>🔥 Saunavuoro</h1>
-            <p>Taloyhtiön saunanvarausjärjestelmä</p>
+            <div class="header-top">
+                <div>
+                    <h1>🔥 Saunavuoro</h1>
+                    <p>Taloyhtiön saunanvarausjärjestelmä</p>
+                </div>
+                <div class="sauna-status-widget">
+                    <div id="sauna-indicator" class="sauna-off">⚫</div>
+                    <div>
+                        <div id="sauna-state">Sauna pois päältä</div>
+                        <div id="sauna-active">Aktiiviset varanneet: 0</div>
+                    </div>
+                </div>
+            </div>
         </header>
 
         <nav class="tabs">
@@ -24,64 +35,76 @@
         <section id="booking" class="tab-content active">
             <h2>Varaa saunavuoro</h2>
             
-            <form id="booking-form">
-                <div class="form-group">
-                    <label for="resident">Asukas *</label>
-                    <select id="resident" required>
-                        <option value="">-- Valitse asukas --</option>
-                    </select>
+            <div class="booking-container">
+                <div class="calendar-section">
+                    <h3>📅 Kalenteri</h3>
+                    <div id="calendar" class="calendar"></div>
                 </div>
 
-                <div class="form-group">
-                    <label for="booking-date">Päivä *</label>
-                    <input type="date" id="booking-date" required>
+                <div class="form-section">
+                    <form id="booking-form">
+                        <div class="form-group">
+                            <label for="resident">Asukas *</label>
+                            <select id="resident" required>
+                                <option value="">-- Valitse asukas --</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="booking-date">Päivä *</label>
+                            <input type="date" id="booking-date" required>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="start-time">Alkamisaika *</label>
+                                <input type="time" id="start-time" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="end-time">Päättymisaika *</label>
+                                <input type="time" id="end-time" required>
+                            </div>
+                        </div>
+
+                        <div id="price-preview" class="price-preview hidden">
+                            <h3>💰 Hinnan ennakkoarvio</h3>
+                            <div class="price-breakdown">
+                                <div class="price-item">
+                                    <span>Alkulämmitys:</span>
+                                    <span class="price-value" id="preview-heating">-</span>
+                                </div>
+                                <div class="price-item">
+                                    <span>Käynnissäpito:</span>
+                                    <span class="price-value" id="preview-maintenance">-</span>
+                                </div>
+                                <div class="price-item">
+                                    <span>Vedenkulu:</span>
+                                    <span class="price-value" id="preview-water">-</span>
+                                </div>
+                                <div class="price-item total">
+                                    <span>Yhteensä:</span>
+                                    <span class="price-value" id="preview-total">-</span>
+                                </div>
+                                <div class="price-note">
+                                    👥 Samanaikaiset varanneet: <span id="preview-residents">-</span>
+                                </div>
+                                <div class="price-note success">
+                                    ✨ Mitä enemmän varauksia, sitä halvempi kaikille!
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="booking-message" class="hidden"></div>
+
+                        <button type="submit" class="btn-primary">Varaa sauna</button>
+                    </form>
                 </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="start-time">Alkamisaika *</label>
-                        <input type="time" id="start-time" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="end-time">Päättymisaika *</label>
-                        <input type="time" id="end-time" required>
-                    </div>
-                </div>
-
-                <div id="price-preview" class="price-preview hidden">
-                    <h3>Hinnan ennakkoarvio</h3>
-                    <div class="price-breakdown">
-                        <div class="price-item">
-                            <span>Alkulämmitys:</span>
-                            <span class="price-value" id="preview-heating">-</span>
-                        </div>
-                        <div class="price-item">
-                            <span>Käynnissäpito:</span>
-                            <span class="price-value" id="preview-maintenance">-</span>
-                        </div>
-                        <div class="price-item">
-                            <span>Vedenkulu:</span>
-                            <span class="price-value" id="preview-water">-</span>
-                        </div>
-                        <div class="price-item total">
-                            <span>Yhteensä:</span>
-                            <span class="price-value" id="preview-total">-</span>
-                        </div>
-                        <div class="price-note">
-                            Samanaikaiset varanneet: <span id="preview-residents">-</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="booking-message" class="hidden"></div>
-
-                <button type="submit" class="btn-primary">Varaa sauna</button>
-            </form>
+            </div>
         </section>
 
         <!-- Varaukset -->
         <section id="bookings" class="tab-content">
-            <h2>Kaikki varaukset</h2>
+            <h2>Varaukset</h2>
             <div id="bookings-list" class="bookings-list"></div>
         </section>
 
@@ -119,7 +142,7 @@
             <h2>Hinnat ja konfiguraatio</h2>
             <form id="pricing-form">
                 <div class="pricing-section">
-                    <h3>Sähkö ja lämmitys</h3>
+                    <h3>⚡ Sähkö ja lämmitys</h3>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="electricity">Sähkön hinta (€/kWh)</label>
@@ -137,7 +160,7 @@
                 </div>
 
                 <div class="pricing-section">
-                    <h3>Käynnissäpito</h3>
+                    <h3>🔥 Käynnissäpito</h3>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="maintenance_power">Käynnissäpitovoima (kW/h)</label>
@@ -147,7 +170,7 @@
                 </div>
 
                 <div class="pricing-section">
-                    <h3>Vesi</h3>
+                    <h3>💧 Vesi</h3>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="water">Veden hinta (€/m³)</label>
